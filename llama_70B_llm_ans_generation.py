@@ -12,6 +12,7 @@ os.environ["TOGETHER_API_KEY"] = #API Key
 
 # Initialize Together client
 client = Together()
+#MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct-Turbo"
 MODEL_NAME = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
 
 # =====================================================
