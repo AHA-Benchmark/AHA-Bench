@@ -65,14 +65,50 @@ def parse_ranked_dictformat(path):
 
 def parse_llm_text(path):
     res = {}
+
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
+
     for obj in data:
-        q = obj['User_Query']
-        text = obj['Assistant']
-        titles = re.findall(r"Dataset \d+: (.*?) \(\d+\)", text)
+        q = obj["User_Query"]
+        assistant = obj.get("Assistant", [])
+
+        titles = []
+
+        # --------------------------------------------------
+        # CASE 1: Assistant is STRING (LLMs)
+        # --------------------------------------------------
+        if isinstance(assistant, str):
+            titles = re.findall(
+                r"Dataset \d+: (.*?) \(\d+\)",
+                assistant
+            )
+
+        # --------------------------------------------------
+        # CASE 2: Assistant is LIST (BM25, E5)
+        # --------------------------------------------------
+        elif isinstance(assistant, list):
+            titles = [
+                normalize(x["dataset_title"])
+                for x in sorted(assistant, key=lambda d: d.get("rank", 0))
+            ]
+
+        # --------------------------------------------------
+        # CASE 3: Assistant is DICT (Qwen cosine)
+        # --------------------------------------------------
+        elif isinstance(assistant, dict):
+            titles = [
+                normalize(v)
+                for _, v in sorted(
+                    assistant.items(),
+                    key=lambda x: int(x[0].split("_")[-1])
+                )
+            ]
+
         res[q] = [normalize(t) for t in titles]
+
     return res
+
 
 # --------------------------------------------------
 # METRICS
@@ -106,15 +142,23 @@ def ndcg_at_k(pred, gt, k):
 # --------------------------------------------------
 # LOAD DATA
 # --------------------------------------------------
-GROUND_TRUTH = load_ground_truth('evaluation_results.jsonl')
+GROUND_TRUTH = load_ground_truth('evaluation_results.json')
 
 MODELS = {
-    'BM25': parse_ranked_list_listformat('bm25_retrieval_results.json'),
-    'E5': parse_ranked_list_listformat('E5_without_sentenceTransformer.json'),
-    'Qwen-Embedding': parse_ranked_dictformat('qwen+cosinesimilarity.json'),
-    'MiniLM': parse_llm_text('all-MiniLM-L6-v2_cosine_similarity.json'),
-    'LLaMA-8B': parse_llm_text('llm_answers_by_topics_llama.json'),
-    'Qwen-8B': parse_llm_text('llm_answers_by_topics_Qwen3-8B.json')
+    'BM25':parse_llm_text('BM25.json'),
+    'E5': parse_llm_text('E5.json'),
+    'Qwen+cosine_similarity': parse_llm_text('qwen+cosinesimilarity.json'),
+    'all-minilm-l6-v2': parse_llm_text('all-MiniLM-L6-v2_cosine_similarity.json'),
+    'LLaMA-8B': parse_llm_text('Llama_8B.json'),
+    'LLaMA-70B': parse_llm_text('Llama_70B.json'),
+    'Qwen-7B': parse_llm_text('Qwen2.5-7B-Instruct-Turbo.json'),
+    'Qwen-72B': parse_llm_text('Qwen_72B.json'),
+    'Qwen-80B': parse_llm_text('Qwen3-Next-80B-A3B-Instruct.json'),
+    'RAG_BM25+Llama-70B': parse_llm_text('bm25_llama70b_rag_results.json'),
+    'RAG_E5+Llama-70B': parse_llm_text('e5_llama70b_rag_results.json'),
+    'ClosedLLm_GPT-4.1': parse_llm_text('llm_answers_by_topic_gpt4.1.json'),
+    'Closed_llm_GPT-4.1_mini': parse_llm_text('llm_answers_by_topic_gpt4.1-mini.json'),
+    'Closed_llm_GPT-4.1_nano': parse_llm_text('llm_answers_by_topic_gpt_4.1_nano.json'),
 }
 
 # --------------------------------------------------
@@ -155,6 +199,9 @@ for r in results:
 # --------------------------------------------------
 # PLOT
 # --------------------------------------------------
+# --------------------------------------------------
+# PLOT (AUTO-SCALED FOR SMALL VALUES)
+# --------------------------------------------------
 labels = [r["Model"] for r in results]
 metrics = [k for k in results[0] if k != "Model"]
 
@@ -162,14 +209,78 @@ x = np.arange(len(labels))
 width = 0.2
 
 plt.figure(figsize=(10,6))
-for i, metric in enumerate(metrics):
-    plt.bar(x + i*width, [r[metric] for r in results], width, label=metric)
 
+# Plot bars
+for i, metric in enumerate(metrics):
+    plt.bar(
+        x + i * width,
+        [r[metric] for r in results],
+        width,
+        label=metric
+    )
+
+# ---- AUTO Y-SCALE BASED ON DATA ----
+all_scores = [r[m] for r in results for m in metrics]
+y_max = max(all_scores)
+
+plt.ylim(0, y_max * 1.3)  # headroom so bars are not clipped
+
+# ---- AXES & LABELS ----
 plt.xticks(x + width, labels, rotation=30)
-plt.ylim(0,1)
 plt.ylabel("Score")
 plt.title("Europa Dataset Retrieval Evaluation")
+
+# ---- FORMAT Y TICKS (IMPORTANT) ----
+plt.ticklabel_format(axis="y", style="plain")
+plt.gca().yaxis.set_major_formatter(
+    plt.FuncFormatter(lambda y, _: f"{y:.4f}")
+)
+
+# ---- OPTIONAL: VALUE LABELS (HIGHLY RECOMMENDED) ----
+for i, metric in enumerate(metrics):
+    for j, r in enumerate(results):
+        value = r[metric]
+        plt.text(
+            j + i * width,
+            value,
+            f"{value:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            rotation=90
+        )
+
 plt.legend()
 plt.tight_layout()
 plt.savefig("europa_retrieval_metrics.png", dpi=300)
+plt.show()
+
+#-----
+#HEATMAP
+#-----
+
+
+models = [r["Model"] for r in results]
+metrics = [k for k in results[0] if k != "Model"]
+
+data = np.array([[r[m] for m in metrics] for r in results])
+
+plt.figure(figsize=(10, 6))
+plt.imshow(data, aspect="auto")
+
+plt.colorbar(label="Score")
+
+plt.xticks(range(len(metrics)), metrics, rotation=30)
+plt.yticks(range(len(models)), models)
+
+plt.title("Retrieval Performance Heatmap")
+
+# value labels
+for i in range(len(models)):
+    for j in range(len(metrics)):
+        plt.text(j, i, f"{data[i, j]:.3f}",
+                 ha="center", va="center", fontsize=8)
+
+plt.tight_layout()
+plt.savefig("europa_heatmap.png", dpi=300)
 plt.show()
