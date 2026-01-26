@@ -1,7 +1,3 @@
-# ==========================================================
-# EUROPA RETRIEVAL EVALUATION SCRIPT (NO pandas / NO sklearn)
-# ==========================================================
-
 import json
 import re
 import numpy as np
@@ -36,7 +32,7 @@ def load_ground_truth(path):
     return gt
 
 # --------------------------------------------------
-# PARSERS
+# PARSERS (FIXED)
 # --------------------------------------------------
 def parse_ranked_list_listformat(path):
     res = {}
@@ -44,8 +40,14 @@ def parse_ranked_list_listformat(path):
         data = json.load(f)
     for obj in data:
         q = obj['User_Query']
-        ranked = sorted(obj['Assistant'], key=lambda x: x['rank'])
-        res[q] = [normalize(d['dataset_title']) for d in ranked]
+        assistant = obj.get('Assistant', [])
+
+        # Ensure we can handle list of dicts OR list of strings
+        if isinstance(assistant, list) and all(isinstance(x, dict) and 'dataset_title' in x for x in assistant):
+            ranked = sorted(assistant, key=lambda x: x.get("rank", 0))
+            res[q] = [normalize(d['dataset_title']) for d in ranked]
+        else:
+            res[q] = [normalize(str(d)) for d in assistant]
     return res
 
 
@@ -55,22 +57,30 @@ def parse_ranked_dictformat(path):
         data = json.load(f)
     for obj in data:
         q = obj['User_Query']
-        ranked = sorted(
-            obj['Assistant'].items(),
-            key=lambda x: int(x[0].split('_')[-1])
-        )
-        res[q] = [normalize(v) for _, v in ranked]
+        assistant = obj.get('Assistant', {})
+
+        if isinstance(assistant, dict):
+            try:
+                ranked = sorted(
+                    assistant.items(),
+                    key=lambda x: int(re.search(r'(\d+)$', x[0]).group(1))
+                )
+            except:
+                ranked = assistant.items()
+            res[q] = [normalize(v) for _, v in ranked]
+        else:
+            # fallback if not a dict
+            res[q] = [normalize(str(v)) for v in assistant]
     return res
 
 
 def parse_llm_text(path):
     res = {}
-
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     for obj in data:
-        q = obj["User_Query"]
+        q = obj.get("User_Query") or obj.get("query")
         assistant = obj.get("Assistant", [])
 
         titles = []
@@ -79,31 +89,35 @@ def parse_llm_text(path):
         # CASE 1: Assistant is STRING (LLMs)
         # --------------------------------------------------
         if isinstance(assistant, str):
-            titles = re.findall(
-                r"Dataset \d+: (.*?) \(\d+\)",
-                assistant
-            )
+            # Match Dataset 1: Title (optional score)
+            titles = re.findall(r"Dataset \d+:\s*(.*?)(?:\s*\(\d+\))?(?:$|\n)", assistant, re.MULTILINE)
+            if not titles:
+                # fallback: split by line breaks or Dataset patterns
+                lines = re.split(r'\n|Dataset \d+:', assistant)
+                titles = [normalize(l) for l in lines if l.strip()]
 
         # --------------------------------------------------
         # CASE 2: Assistant is LIST (BM25, E5)
         # --------------------------------------------------
         elif isinstance(assistant, list):
-            titles = [
-                normalize(x["dataset_title"])
-                for x in sorted(assistant, key=lambda d: d.get("rank", 0))
-            ]
+            if all(isinstance(x, dict) and 'dataset_title' in x for x in assistant):
+                ranked = sorted(assistant, key=lambda d: d.get("rank", 0))
+                titles = [normalize(x["dataset_title"]) for x in ranked]
+            else:
+                titles = [normalize(str(x)) for x in assistant]
 
         # --------------------------------------------------
         # CASE 3: Assistant is DICT (Qwen cosine)
         # --------------------------------------------------
         elif isinstance(assistant, dict):
-            titles = [
-                normalize(v)
-                for _, v in sorted(
+            try:
+                ranked = sorted(
                     assistant.items(),
-                    key=lambda x: int(x[0].split("_")[-1])
+                    key=lambda x: int(re.search(r'(\d+)$', x[0]).group(1))
                 )
-            ]
+            except:
+                ranked = assistant.items()
+            titles = [normalize(v) for _, v in ranked]
 
         res[q] = [normalize(t) for t in titles]
 
@@ -156,9 +170,11 @@ MODELS = {
     'Qwen-80B': parse_llm_text('Qwen3-Next-80B-A3B-Instruct.json'),
     'RAG_BM25+Llama-70B': parse_llm_text('bm25_llama70b_rag_results.json'),
     'RAG_E5+Llama-70B': parse_llm_text('e5_llama70b_rag_results.json'),
-    'ClosedLLm_GPT-4.1': parse_llm_text('llm_answers_by_topic_gpt4.1.json'),
-    'Closed_llm_GPT-4.1_mini': parse_llm_text('llm_answers_by_topic_gpt4.1-mini.json'),
-    'Closed_llm_GPT-4.1_nano': parse_llm_text('llm_answers_by_topic_gpt_4.1_nano.json'),
+    'GPT-4.1': parse_llm_text('llm_answers_by_topic_gpt4.1.json'),
+    'GPT-4.1_mini': parse_llm_text('llm_answers_by_topic_gpt4.1-mini.json'),
+    'GPT-4.1_nano': parse_llm_text('llm_answers_by_topic_gpt_4.1_nano.json'),
+    'GPT-5.2': parse_llm_text('llm_answers_by_topic_gpt_5.2.json'),
+
 }
 
 # --------------------------------------------------
