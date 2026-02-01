@@ -125,11 +125,19 @@ Metrics reported: **P@3, R@3, MRR, nDCG@3**
 | all-MiniLM-L6-v2 | 0.313 | 0.252 | 0.423 | 0.480 |
 | Qwen3 embeddings | 0.362 | 0.293 | 0.471 | 0.538 |
 | **E5-large-v2** | **0.448** | **0.356** | **0.553** | **0.633** |
-| **Retrieval-free LLMs (query-only)** |||||
+| **Retrieval-free LLM baselines (query-only)** |||||
+| *Open-weight models* |||||
+| LLaMA3.1-8B | 0.001 | 0.001 | 0.004 | 0.004 |
 | LLaMA3.1-70B | 0.004 | 0.003 | 0.009 | 0.009 |
+| Qwen2.5-7B | 0.001 | 0.001 | 0.003 | 0.003 |
+| Qwen2.5-72B | 0.002 | 0.002 | 0.005 | 0.005 |
+| Qwen3-80B | 0.001 | 0.001 | 0.002 | 0.002 |
+| *Closed-source models* |||||
 | GPT-4.1 | 0.002 | 0.001 | 0.005 | 0.005 |
+| GPT-4.1 mini | 0.000 | 0.000 | 0.001 | 0.001 |
+| GPT-4.1 nano | 0.001 | 0.001 | 0.002 | 0.002 |
 | GPT-5.2 | 0.003 | 0.003 | 0.007 | 0.008 |
-| **Retrieval-Augmented Systems** |||||
+| **Retrieval-augmented systems** |||||
 | RAG (BM25) + LLaMA3.1-70B | 0.389 | 0.312 | 0.718 | 0.723 |
 | **RAG (E5-large-v2) + LLaMA3.1-70B** | **0.482** | **0.381** | **0.817** | **0.824** |
 
