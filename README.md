@@ -98,7 +98,7 @@ Key characteristics:
 | 4 | 1,746 | 12.73 |
 | 5 | 2,710 | 19.75 |
 
-<p align="center">
+<p align="left">
   <img src="figures/relevance_multiplicity.png" width="600">
 </p>
 
