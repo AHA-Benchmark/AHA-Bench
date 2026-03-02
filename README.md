@@ -33,7 +33,7 @@ To avoid over-representation of dominant categories, datasets are sampled propor
 | **Total** | **7,000** | **100** |
 
 <p align="left">
-  <img src="figures/topic_distribution.png" width="700" height="1500">
+  <img src="figures/topic_distribution.png" width="800" height="2500">
 </p>
 
 *Figure 1: Topic distribution of datasets in AHA-Bench.*
@@ -73,7 +73,7 @@ Dataset-request queries (e.g., queries that explicitly name a dataset) are gener
 | Avg. request query length | 12.09 words |
 
 <p align="left">
-  <img src="figures/query_style_distribution.png" width="600" height="1500">
+  <img src="figures/query_style_distribution.png" width="700" height="1500">
 </p>
 
 *Figure 2: Distribution of query types in AHA-Bench.*
