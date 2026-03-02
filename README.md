@@ -73,7 +73,7 @@ Dataset-request queries (e.g., queries that explicitly name a dataset) are gener
 | Avg. request query length | 12.09 words |
 
 <p align="left">
-  <img src="figures/query_style_distribution.png" width="600" height="700">
+  <img src="figures/query_style_distribution.png" width="600" height="1000">
 </p>
 
 *Figure 2: Distribution of query types in AHA-Bench.*
