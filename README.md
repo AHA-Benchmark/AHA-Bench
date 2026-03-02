@@ -32,7 +32,7 @@ To avoid over-representation of dominant categories, datasets are sampled propor
 | International issues | 6 | 0.1 |
 | **Total** | **7,000** | **100** |
 
-<p align="center">
+<p align="left">
   <img src="figures/topic_distribution.png" width="600">
 </p>
 
@@ -72,7 +72,7 @@ Dataset-request queries (e.g., queries that explicitly name a dataset) are gener
 | Avg. implied query length | 19.87 words |
 | Avg. request query length | 12.09 words |
 
-<p align="center">
+<p align="left">
   <img src="figures/query_style_distribution.png" width="600">
 </p>
 
@@ -141,7 +141,7 @@ Metrics reported: **P@3, R@3, MRR, nDCG@3**
 | RAG (BM25) + LLaMA3.1-70B | 0.389 | 0.312 | 0.718 | 0.723 |
 | **RAG (E5-large-v2) + LLaMA3.1-70B** | **0.482** | **0.381** | **0.817** | **0.824** |
 
-<p align="center">
+<p align="left">
   <img src="figures/model_performance.png" width="700">
 </p>
 
