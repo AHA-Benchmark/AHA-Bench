@@ -1,7 +1,9 @@
 import json
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import SentenceTransformer
 import torch
 from tqdm import tqdm
+import faiss
+import os
 
 # ---------------------------
 # Configuration
@@ -9,17 +11,23 @@ from tqdm import tqdm
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 TOP_K = 3
 OUTPUT_FILE = "dense_retrieval_top3.json"
+CHECKPOINT_FILE = "retrieval_checkpoint.json"
 
 DATASET_FILE = "datasets_metadata.jsonl"
 
 BATCH_SIZE = 256
-SIMILARITY_CHUNK = 50000   # compare 50k vectors at a time
 
 # ---------------------------
 # Load queries
 # ---------------------------
 with open("queries_by_topic.json", "r", encoding="utf-8") as f:
     queries_by_topic = json.load(f)
+
+# Flatten queries with topic tracking
+all_queries = []
+for topic, queries in queries_by_topic.items():
+    for query in queries:
+        all_queries.append((topic, query))
 
 # ---------------------------
 # Load datasets (JSONL stream)
@@ -71,58 +79,90 @@ dataset_embeddings = torch.cat(dataset_embeddings_list, dim=0)
 print("Dataset embeddings shape:", dataset_embeddings.shape)
 
 # ---------------------------
-# Retrieval
+# Normalize embeddings (for cosine similarity via FAISS)
+# ---------------------------
+dataset_embeddings = torch.nn.functional.normalize(dataset_embeddings, p=2, dim=1)
+
+# Convert to numpy for FAISS
+dataset_embeddings_np = dataset_embeddings.numpy().astype("float32")
+
+# ---------------------------
+# Build FAISS index (INNER PRODUCT = cosine since normalized)
+# ---------------------------
+print("Building FAISS index...")
+
+dimension = dataset_embeddings_np.shape[1]
+index = faiss.IndexFlatIP(dimension)
+index.add(dataset_embeddings_np)
+
+print(f"FAISS index built with {index.ntotal} vectors")
+
+# ---------------------------
+# Load checkpoint if exists
 # ---------------------------
 results = []
+start_idx = 0
 
-print("Running retrieval...")
-
-for topic, queries in queries_by_topic.items():
-
-    for query in queries:
-
-        query_embedding = model.encode(
-            query,
-            convert_to_tensor=True
-        ).cpu()
-
-        best_scores = []
-        best_indices = []
-
-        # chunk similarity to avoid large matrix
-        for start in range(0, len(dataset_embeddings), SIMILARITY_CHUNK):
-
-            end = start + SIMILARITY_CHUNK
-            chunk = dataset_embeddings[start:end]
-
-            cosine_scores = util.cos_sim(query_embedding, chunk)[0]
-
-            top_results = torch.topk(cosine_scores, k=TOP_K)
-
-            for score, idx in zip(top_results.values, top_results.indices):
-                best_scores.append(score.item())
-                best_indices.append(start + idx.item())
-
-        # global top3
-        combined = list(zip(best_scores, best_indices))
-        combined = sorted(combined, key=lambda x: x[0], reverse=True)[:TOP_K]
-
-        indices = [x[1] for x in combined]
-
-        # ranking logic unchanged
-        top_datasets = []
-        for rank, idx in enumerate(reversed(indices)):
-            top_datasets.append(f"Dataset {rank+1}: {dataset_titles[idx]} ({rank})")
-
-        results.append({
-            "User_Query": query,
-            "Assistant": " ".join(top_datasets)
-        })
+if os.path.exists(CHECKPOINT_FILE):
+    print("Loading checkpoint...")
+    with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
+        checkpoint = json.load(f)
+        results = checkpoint["results"]
+        start_idx = checkpoint["last_index"] + 1
+    print(f"Resuming from query index {start_idx}")
 
 # ---------------------------
-# Save output
+# Retrieval (FAISS)
+# ---------------------------
+print("Running retrieval...")
+
+for i in tqdm(range(start_idx, len(all_queries))):
+
+    topic, query = all_queries[i]
+
+    query_embedding = model.encode(
+        query,
+        convert_to_tensor=True
+    ).cpu()
+
+    # Normalize query
+    query_embedding = torch.nn.functional.normalize(query_embedding, p=2, dim=0)
+
+    query_np = query_embedding.numpy().astype("float32").reshape(1, -1)
+
+    # FAISS search
+    scores, indices = index.search(query_np, TOP_K)
+
+    indices = indices[0]
+    scores = scores[0]
+
+    # ranking logic unchanged
+    top_datasets = []
+    for rank, idx in enumerate(reversed(indices)):
+        top_datasets.append(f"Dataset {rank+1}: {dataset_titles[idx]} ({rank})")
+
+    results.append({
+        "User_Query": query,
+        "Assistant": " ".join(top_datasets)
+    })
+
+    # ---------------------------
+    # Save checkpoint every query
+    # ---------------------------
+    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
+        json.dump({
+            "last_index": i,
+            "results": results
+        }, f, ensure_ascii=False, indent=2)
+
+# ---------------------------
+# Save final output
 # ---------------------------
 with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
     json.dump(results, f, indent=2, ensure_ascii=False)
+
+# Remove checkpoint after success
+if os.path.exists(CHECKPOINT_FILE):
+    os.remove(CHECKPOINT_FILE)
 
 print(f"✅ Dense retrieval complete. Results saved to {OUTPUT_FILE}")
