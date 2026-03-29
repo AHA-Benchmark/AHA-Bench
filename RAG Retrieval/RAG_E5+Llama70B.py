@@ -3,6 +3,7 @@ import json
 import time
 import faiss
 import torch
+import numpy as np
 from tqdm import tqdm
 from datetime import datetime
 from together import Together
@@ -11,7 +12,7 @@ from sentence_transformers import SentenceTransformer
 # =====================================================
 # 1️⃣ Together API Key
 # =====================================================
-os.environ["TOGETHER_API_KEY"] = #API_key
+os.environ["TOGETHER_API_KEY"] = #API Key
 client = Together()
 
 LLM_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
@@ -20,13 +21,17 @@ EMBED_MODEL = "intfloat/e5-base-v2"
 # =====================================================
 # 2️⃣ Files & parameters
 # =====================================================
-DATASETS_FILE = "datasets_landing_metadata.json"
+DATASETS_FILE = "datasets_metadata.jsonl"
 QUERIES_FILE = "queries_by_topic.json"
 OUTPUT_FILE = "e5_llama70b_rag_results.json"
 LOG_FILE = f"e5_llama70b_rag_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
 TOP_K_RETRIEVAL = 5
 SLEEP_TIME = 0.2
+EMBED_BATCH_SIZE = 512
+
+FAISS_INDEX_FILE = "datasets_faiss.index"
+EMBEDDINGS_FILE = "dataset_embeddings.npy"
 
 # =====================================================
 # 3️⃣ Load E5 embedding model
@@ -36,47 +41,72 @@ embedder = SentenceTransformer(EMBED_MODEL, device=device)
 print("✅ E5 embedding model loaded")
 
 # =====================================================
-# 4️⃣ Load dataset metadata
+# 4️⃣ Load dataset metadata from JSONL
 # =====================================================
-with open(DATASETS_FILE, "r", encoding="utf-8") as f:
-    datasets_by_topic = json.load(f)
-
 dataset_records = []
 corpus_texts = []
 
-for topic, datasets in datasets_by_topic.items():
-    for ds in datasets:
-        title = ds.get("title", "").strip()
-        desc = ds.get("description", "").strip()
-        text = f"{title}. {desc}"
+print("📂 Loading datasets from JSONL...")
+
+with open(DATASETS_FILE, "r", encoding="utf-8") as f:
+    for line in tqdm(f):
+
+        if not line.strip():
+            continue
+
+        item = json.loads(line)
+
+        title = (item.get("title") or "").strip()
+        desc = (item.get("description") or "").strip()
+
+        if not title and not desc:
+            continue
+            
         dataset_records.append({
             "title": title,
             "description": desc
         })
-        corpus_texts.append(f"passage: {text}")
+
+        corpus_texts.append(f"passage: {title}. {desc}")
 
 print(f"✅ Loaded {len(dataset_records)} datasets")
 
 # =====================================================
-# 5️⃣ Build FAISS index (E5)
+# 5️⃣ Build / Load FAISS index
 # =====================================================
-print("🔄 Encoding dataset embeddings...")
-corpus_embeddings = embedder.encode(
-    corpus_texts,
-    batch_size=64,
-    convert_to_numpy=True,
-    show_progress_bar=True,
-    normalize_embeddings=True
-)
+dim = embedder.get_sentence_embedding_dimension()
 
-dim = corpus_embeddings.shape[1]
-index = faiss.IndexFlatIP(dim)
-index.add(corpus_embeddings)
+if os.path.exists(FAISS_INDEX_FILE) and os.path.exists(EMBEDDINGS_FILE):
+    print("⚡ Loading FAISS index and embeddings from disk...")
+    index = faiss.read_index(FAISS_INDEX_FILE)
+    all_embeddings = np.load(EMBEDDINGS_FILE)
+    print(f"✅ Loaded FAISS index with {index.ntotal} vectors")
+else:
+    print("⚙️ Building FAISS index (first run)...")
+    index = faiss.IndexFlatIP(dim)
+    all_embeddings = []
 
-print("✅ FAISS index built")
+    for i in tqdm(range(0, len(corpus_texts), EMBED_BATCH_SIZE)):
+        batch = corpus_texts[i:i+EMBED_BATCH_SIZE]
+
+        emb = embedder.encode(
+            batch,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False
+        )
+
+        index.add(emb)
+        all_embeddings.append(emb)
+
+    all_embeddings = np.vstack(all_embeddings)
+
+    faiss.write_index(index, FAISS_INDEX_FILE)
+    np.save(EMBEDDINGS_FILE, all_embeddings)
+    print("✅ FAISS index built and saved to disk")
 
 # =====================================================
-# 6️⃣ Load queries (flattened)
+# 6️⃣ Load queries
 # =====================================================
 with open(QUERIES_FILE, "r", encoding="utf-8") as f:
     queries_by_topic = json.load(f)
@@ -92,19 +122,31 @@ for topic, queries in queries_by_topic.items():
 print(f"✅ Loaded {len(flat_queries)} queries")
 
 # =====================================================
-# 7️⃣ Resume mechanism
+# 7️⃣ Resume mechanism (Smart Resume)
 # =====================================================
+results = []
+completed = set()
+incomplete_queries = {}
+
 if os.path.exists(OUTPUT_FILE):
     with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
         results = json.load(f)
-    completed = {(r["topic"], r["User_Query"]) for r in results}
-    print(f"🔁 Resuming — {len(completed)} queries already completed")
+
+    for r in results:
+        key = (r["topic"], r["User_Query"])
+        assistant = r.get("Assistant", "").strip()
+        if assistant == "":
+            incomplete_queries[key] = r
+        else:
+            completed.add(key)
+
+    print(f"🔁 Completed queries: {len(completed)}")
+    print(f"⚠️ Incomplete queries to retry: {len(incomplete_queries)}")
 else:
-    results = []
-    completed = set()
+    print("🆕 No previous output file — starting fresh")
 
 # =====================================================
-# 8️⃣ RAG Prompt (STRICT)
+# 8️⃣ RAG Prompt
 # =====================================================
 RAG_PROMPT = """
 You are a dataset recommender for the EU Open Data Portal (data.europa.eu).
@@ -148,7 +190,7 @@ def format_retrieved(datasets):
     return "\n\n".join(blocks)
 
 # =====================================================
-# 🔟 LLaMA generation
+# 🔟 LLaMA generation with 402-safe handling
 # =====================================================
 def generate_rag_answer(query, retrieved):
     prompt = RAG_PROMPT.format(
@@ -164,28 +206,38 @@ def generate_rag_answer(query, retrieved):
             temperature=0.3,
             top_p=0.9
         )
+
         return response.choices[0].message.content.strip()
+
     except Exception as e:
-        print(f"⚠️ LLM error: {e}")
-        return ""
+        err_str = str(e)
+        if "credit_limit" in err_str or "402" in err_str:
+            print("❌ TogetherAI credits exhausted. Stopping safely.")
+            return None  # stop the main loop
+        else:
+            print(f"⚠️ LLM error: {e}")
+            return ""
 
 # =====================================================
-# 1️⃣1️⃣ Main RAG loop (E5 + LLaMA)
+# 1️⃣1️⃣ Main RAG loop
 # =====================================================
 print("🧠 Running E5 + LLaMA-70B RAG...")
 
 with open(LOG_FILE, "a", encoding="utf-8") as log:
+
     log.write(f"E5 + LLaMA-70B RAG Log — {datetime.now()}\n")
     log.write("=" * 70 + "\n")
 
     for item in tqdm(flat_queries, desc="Processing Queries"):
+
         topic = item["topic"]
         query = item["query"]
+        key = (topic, query)
 
-        if (topic, query) in completed:
+        if key in completed:
             continue
 
-        # ---- Dense Retrieval (E5) ----
+        # ---- Query embedding ----
         query_embedding = embedder.encode(
             f"query: {query}",
             convert_to_numpy=True,
@@ -202,6 +254,10 @@ with open(LOG_FILE, "a", encoding="utf-8") as log:
         # ---- Generation ----
         answer = generate_rag_answer(query, retrieved)
 
+        if answer is None:
+            print(f"⏸️ Stopping loop at query: {query}")
+            break  # stop safely if credits exhausted
+
         record = {
             "topic": topic,
             "User_Query": query,
@@ -209,8 +265,17 @@ with open(LOG_FILE, "a", encoding="utf-8") as log:
             "Assistant": answer
         }
 
-        results.append(record)
-        completed.add((topic, query))
+        # ---- Update results incrementally ----
+        if key in incomplete_queries:
+            for r in results:
+                if r["topic"] == topic and r["User_Query"] == query:
+                    r["Assistant"] = answer
+                    r["Retrieved_Datasets"] = retrieved
+                    break
+        else:
+            results.append(record)
+
+        completed.add(key)
 
         # ---- Logging ----
         log.write(f"Topic: {topic}\n")
