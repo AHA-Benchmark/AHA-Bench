@@ -114,7 +114,7 @@ Metrics reported: **P@3, R@3, MRR, nDCG@3**
 | **RAG (E5-large-v2) + LLaMA3.1-70B** | **0.0957** | **0.0722** | **0.2001** | **0.2042** |
 
 <p align="left">
-  <img src="figures/model_performance.png" width="700">
+  <img src="figures/model_performances.png" width="700">
 </p>
 
 *Figure 4: Retrieval performance across model classes.*
