@@ -77,33 +77,6 @@ Dataset-request queries (e.g., queries that explicitly name a dataset) are gener
 </p>
 
 *Figure 2: Distribution of query types in AHA-Bench.*
-
----
-
-## 🎯 Relevance Structure
-
-Relevance labels are **graded (0–4)** and constructed via a hybrid dense-retrieval and LLM-based annotation pipeline.
-
-Key characteristics:
-
-- **99.26%** of queries have at least one highly relevant dataset (score ≥ 3)
-- Most queries admit **multiple relevant datasets**, reflecting exploratory search scenarios
-
-| # Highly Relevant Datasets (≥3) | # Queries | % Queries |
-|--------------------------------|----------:|----------:|
-| 0 | 102 | 0.74 |
-| 1 | 919 | 6.70 |
-| 2 | 4,187 | 30.52 |
-| 3 | 4,057 | 29.57 |
-| 4 | 1,746 | 12.73 |
-| 5 | 2,710 | 19.75 |
-
-<p align="left">
-  <img src="figures/relevance_multiplicity.png" width="700">
-</p>
-
-*Figure 3: Relevance multiplicity per query.*
-
 ---
 
 ## 📊 Benchmark Performance
